@@ -3,10 +3,16 @@ package utb.fai;
 import java.net.URI;
 import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.swing.text.MutableAttributeSet;
 import javax.swing.text.html.HTML;
 import javax.swing.text.html.HTMLEditorKit;
+
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 
 /**
  * Třída ParserCallback je používána parserem DocumentParser,
@@ -37,7 +43,7 @@ class ParserCallback extends HTMLEditorKit.ParserCallback {
      * (parsovali). Pokud najdeme na stránce URL, který je v této množině,
      * nebudeme jej u dále parsovat
      */
-    HashSet<URI> visitedURIs;
+    Set<URI> visitedURIs;
 
     /**
      * foundURLs jsou všechna nová (zatím nenavštívená) URL, která na stránce
@@ -48,10 +54,13 @@ class ParserCallback extends HTMLEditorKit.ParserCallback {
 
     /** pokud debugLevel>1, budeme vypisovat debugovací hlášky na std. error */
     int debugLevel = 0;
-
-    ParserCallback(HashSet<URI> visitedURIs, LinkedList<URIinfo> foundURIs) {
-        this.foundURIs = foundURIs;
-        this.visitedURIs = visitedURIs;
+    
+        private ConcurrentHashMap<String, Integer> wordFrequency;
+    
+        ParserCallback(Set<URI> visitedURIs, LinkedList<URIinfo> foundURIs, ConcurrentHashMap<String, Integer> wordFrequency) {
+            this.foundURIs = foundURIs;
+            this.visitedURIs = visitedURIs;
+            this.wordFrequency = wordFrequency;
     }
 
     /**
@@ -61,30 +70,28 @@ class ParserCallback extends HTMLEditorKit.ParserCallback {
         handleStartTag(t, a, pos);
     }
 
-    public void handleStartTag(HTML.Tag t, MutableAttributeSet a, int pos) {
+    public void handleStartTag(Document doc) {        
         URI uri;
-        String href = null;
-        if (debugLevel > 1)
-            System.err.println("handleStartTag: " + t.toString() + ", pos=" + pos + ", attribs=" + a.toString());
-        if (depth <= maxDepth)
-            if (t == HTML.Tag.A)
-                href = (String) a.getAttribute(HTML.Attribute.HREF);
-            else if (t == HTML.Tag.FRAME)
-                href = (String) a.getAttribute(HTML.Attribute.SRC);
-        if (href != null)
-            try {
-                uri = pageURI.resolve(href);
-                if (!uri.isOpaque() && !visitedURIs.contains(uri)) {
-                    visitedURIs.add(uri);
-                    foundURIs.add(new URIinfo(uri, depth + 1));
-                    if (debugLevel > 0)
-                        System.err.println("Adding URI: " + uri.toString());
+        if (depth < maxDepth){
+        Elements links = doc.select("a[href], frame[src]");
+        for (Element link : links){
+            String href = link.is("a") ? link.attr("abs:href") : link.attr("abs:src");
+            if (href != null)
+                try {
+                    uri = pageURI.resolve(href);
+                    if (!uri.isOpaque() && !visitedURIs.contains(uri)) {
+                        visitedURIs.add(uri);
+                        foundURIs.add(new URIinfo(uri, depth + 1));
+                        if (debugLevel > 0)
+                            System.err.println("Adding URI: " + uri.toString());
+                    }
+                } catch (Exception e) {
+                    System.err.println("Nalezeno nekorektní URI: " + href);
+                    e.printStackTrace();
                 }
-            } catch (Exception e) {
-                System.err.println("Nalezeno nekorektní URI: " + href);
-                e.printStackTrace();
             }
-
+        }
+            
     }
 
     /******************************************************************
@@ -99,10 +106,14 @@ class ParserCallback extends HTMLEditorKit.ParserCallback {
      * data typu Integer bude dosavadní počet výskytu daného slova v
      * HTML stránkách.
      *******************************************************************/
-    public void handleText(char[] data, int pos) {
-        System.out.println("handleText: " + String.valueOf(data) + ", pos=" + pos);
-        /**
-         * ...tady bude vaše implementace...
-         */
+    public void handleText(String data) {
+
+        String[] words = String.valueOf(data).split("\\s+");
+        for (String word : words) {
+            if (!word.isEmpty()) {
+                wordFrequency.merge(word, 1, Integer::sum);
+            }
+        }
     }
+
 }
