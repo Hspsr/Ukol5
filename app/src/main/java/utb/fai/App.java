@@ -9,48 +9,79 @@ import java.io.InputStreamReader;
 import java.net.URI;
 import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
-import javax.swing.text.html.parser.ParserDelegator;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
 
 public class App {
 
+	private static ConcurrentHashMap<String, Integer> wordFrequency = new ConcurrentHashMap<>();
+
 	public static void main(String[] args) {
+
+		String startURL = args[0];
+        int maxDepth = Integer.parseInt(args[1]);
+        int debugLevel = Integer.parseInt(args[2]);
+
 		LinkedList<URIinfo> foundURIs = new LinkedList<URIinfo>();
-		HashSet<URI> visitedURIs = new HashSet<URI>();
+		Set<URI> visitedURIs = new ConcurrentHashMap().newKeySet();
 		URI uri;
+
 		try {
 			uri = new URI(args[0] + "/");
 			foundURIs.add(new URIinfo(uri, 0));
 			visitedURIs.add(uri);
 
-			if (args.length < 1) {
-				System.err.println("Missing parameter - start URL");
-				return;
-			}
-			/**
-			 * Zde zpracujte dalí parametry - maxDepth a debugLevel
-			 */
+			ExecutorService executor = Executors.newFixedThreadPool(10);
 
-			ParserCallback callBack = new ParserCallback(visitedURIs, foundURIs);
-			ParserDelegator parser = new ParserDelegator();
+			ParserCallback callBack = new ParserCallback(visitedURIs, foundURIs, wordFrequency);
 
 			while (!foundURIs.isEmpty()) {
 				URIinfo URIinfo = foundURIs.removeFirst();
-				callBack.depth = URIinfo.depth;
-				callBack.pageURI = uri = URIinfo.uri;
-				System.err.println("Analyzing " + uri);
-				try {
-					BufferedReader reader = new BufferedReader(new InputStreamReader(uri.toURL().openStream()));
-					parser.parse(reader, callBack, true);
-					reader.close();
-				} catch (FileNotFoundException e) {
-					System.err.println("Error loading page - does it exist?");
-				}
+
+				if (URIinfo.depth > maxDepth) continue;
+				
+				Runnable task = () -> {
+					URI yuri = URIinfo.uri;
+				
+					System.err.println("Analyzing " + yuri);
+					try {
+						BufferedReader reader = new BufferedReader(new InputStreamReader(yuri.toURL().openStream()));
+						callBack.depth = URIinfo.depth;
+						callBack.pageURI = URIinfo.uri;
+						Document doc = Jsoup.connect(yuri.toString()).get();
+						callBack.handleText(doc.body().text());
+						callBack.handleStartTag(doc);
+						reader.close();
+					} catch (Exception e) {
+						System.err.println("Error loading page - does it exist?");
+					}
+				};
+				executor.submit(task);
 			}
+			executor.shutdown();
+            executor.awaitTermination(10, TimeUnit.MINUTES);
+
 		} catch (Exception e) {
 			System.err.println("Zachycena neoetøená výjimka, konèíme...");
 			e.printStackTrace();
 		}
+
+		printTop20Words();
+
 	}
+
+	private static void printTop20Words() {
+        wordFrequency.entrySet()
+            .stream()
+            .sorted((e1, e2) -> e2.getValue().compareTo(e1.getValue()))
+            .limit(20)
+            .forEach(entry -> System.out.println(entry.getKey() + ";" + entry.getValue()));
+    }
 
 }
